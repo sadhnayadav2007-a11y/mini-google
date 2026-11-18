@@ -1,0 +1,1885 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  Search,
+  ArrowRight,
+  ArrowDown,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Sparkles,
+  AlertTriangle,
+  Network,
+  Hash,
+  Award,
+  X,
+  Info,
+  Layers,
+  CheckCircle2,
+  Cpu,
+  Compass,
+  ExternalLink
+} from 'lucide-react';
+
+// ============================================================================
+// 1. DATASET (Exact 6-page local web graph with curated exhibit emojis)
+// ============================================================================
+const WEB_PAGES = [
+  {
+    id: 1,
+    emoji: '🗺️',
+    url: 'pune-food-guide.com',
+    text: 'Where to eat in Pune - vada pav and biryani and pizza',
+    linksTo: [2],
+  },
+  {
+    id: 2,
+    emoji: '🍕',
+    url: 'best-pizza-pune.com',
+    text: 'Fresh wood-fired pizza made daily - try our cheese pizza',
+    linksTo: [1, 3],
+  },
+  {
+    id: 3,
+    emoji: '🎓',
+    url: 'college-canteen-blog.com',
+    text: 'Student reviews of canteen food and chai and Friday pizza',
+    linksTo: [2, 4],
+  },
+  {
+    id: 4,
+    emoji: '🏠',
+    url: 'pizza-recipes-home.com',
+    text: 'Make pizza at home - pizza dough and pizza sauce',
+    linksTo: [2, 5],
+  },
+  {
+    id: 5,
+    emoji: '💰',
+    url: 'cheap-eats-pune.com',
+    text: 'Good food under 100 rupees - misal and dosa and pizza slices',
+    linksTo: [2],
+  },
+  {
+    id: 6,
+    emoji: '🚨',
+    url: 'pizza-pizza-pizza.com',
+    text: 'pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza',
+    linksTo: [1],
+  },
+];
+
+// ============================================================================
+// 2. DYNAMIC ALGORITHMS (PageRank + Keyword Frequency)
+// ============================================================================
+
+/**
+ * Computes iterative PageRank dynamically until convergence.
+ * Formula: PR(A) = (1 - d) / N + d * Σ(PR(Ti) / C(Ti))
+ */
+function calculatePageRank(pages, damping = 0.85, tolerance = 1e-9, maxIterations = 200) {
+  const N = pages.length;
+  let ranks = {};
+  const incomingMap = {};
+  const outgoingCount = {};
+
+  pages.forEach((p) => {
+    ranks[p.id] = 1 / N;
+    incomingMap[p.id] = [];
+    outgoingCount[p.id] = p.linksTo.length;
+  });
+
+  // Build incoming links map dynamically
+  pages.forEach((source) => {
+    source.linksTo.forEach((targetId) => {
+      if (incomingMap[targetId]) {
+        incomingMap[targetId].push(source.id);
+      }
+    });
+  });
+
+  let iterations = 0;
+  let maxDiff = Infinity;
+
+  while (maxDiff > tolerance && iterations < maxIterations) {
+    const nextRanks = {};
+    maxDiff = 0;
+
+    // Account for any dangling nodes (though none exist in this graph)
+    let danglingSum = 0;
+    pages.forEach((p) => {
+      if (outgoingCount[p.id] === 0) {
+        danglingSum += ranks[p.id];
+      }
+    });
+
+    pages.forEach((page) => {
+      let incomingContribution = 0;
+      incomingMap[page.id].forEach((linkerId) => {
+        incomingContribution += ranks[linkerId] / outgoingCount[linkerId];
+      });
+
+      const newRank =
+        (1 - damping) / N +
+        damping * (incomingContribution + danglingSum / N);
+
+      nextRanks[page.id] = newRank;
+      const diff = Math.abs(newRank - ranks[page.id]);
+      if (diff > maxDiff) maxDiff = diff;
+    });
+
+    ranks = nextRanks;
+    iterations += 1;
+  }
+
+  // Normalize so percentages sum cleanly to 100%
+  const totalRank = Object.values(ranks).reduce((acc, v) => acc + v, 0);
+  const normalized = {};
+  Object.keys(ranks).forEach((id) => {
+    normalized[id] = ranks[id] / totalRank;
+  });
+
+  return {
+    ranks: normalized,
+    incomingMap,
+    outgoingCount,
+    iterations,
+    damping,
+    N,
+  };
+}
+
+/**
+ * Counts keyword occurrences dynamically (case-insensitive, supports multi-word or single-word queries)
+ */
+function countKeywordOccurrences(text, query) {
+  const cleanQuery = query.trim().toLowerCase();
+  if (!cleanQuery) return 0;
+
+  const lowerText = text.toLowerCase();
+  // Escape regex special chars
+  const escaped = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match whole word/phrase boundaries when alphanumeric, fallback to substring
+  const pattern = /^[a-z0-9-]+$/i.test(cleanQuery)
+    ? new RegExp(`\\b${escaped}\\b`, 'gi')
+    : new RegExp(escaped, 'gi');
+
+  const matches = lowerText.match(pattern);
+  return matches ? matches.length : 0;
+}
+
+// ============================================================================
+// 3. CUSTOM ANIMATED HOOKS & HELPERS
+// ============================================================================
+
+function useAnimatedNumber(target, duration = 900) {
+  const [value, setValue] = useState(0);
+
+  useEffect(() => {
+    let startTimestamp = null;
+    const startValue = value;
+    let animationFrame;
+
+    const step = (timestamp) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(startValue + (target - startValue) * eased);
+
+      if (progress < 1) {
+        animationFrame = window.requestAnimationFrame(step);
+      }
+    };
+
+    animationFrame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [target, duration]);
+
+  return value;
+}
+
+function AnimatedPercentage({ value, className = '' }) {
+  const animated = useAnimatedNumber(value, 1100);
+  return <span className={className}>{animated.toFixed(2)}%</span>;
+}
+
+function HighlightedText({ text, query }) {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return <span>{text}</span>;
+
+  const escaped = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = /^[a-z0-9-]+$/i.test(cleanQuery)
+    ? new RegExp(`(\\b${escaped}\\b)`, 'gi')
+    : new RegExp(`(${escaped})`, 'gi');
+
+  const parts = text.split(regex);
+
+  return (
+    <span>
+      {parts.map((part, idx) =>
+        part.toLowerCase() === cleanQuery.toLowerCase() ? (
+          <mark
+            key={idx}
+            className="bg-[#D4AF37]/20 text-[#F4EFE6] border-b border-[#D4AF37]/60 px-1 rounded-sm font-medium"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={idx}>{part}</span>
+        )
+      )}
+    </span>
+  );
+}
+
+// ============================================================================
+// 4. INTERACTIVE SVG PAGERANK NETWORK GRAPH
+// ============================================================================
+
+function PageRankNetworkGraph({
+  pages,
+  prData,
+  selectedPageId,
+  onSelectPage,
+}) {
+  const [hoveredId, setHoveredId] = useState(null);
+
+  // Carefully balanced topology matching the prompt's diagram:
+  //        Page 6 (top)
+  //          ↓
+  //        Page 1 (upper-mid)
+  //          ↓
+  //        Page 2 (central hub)
+  //        ↙   ↘
+  //    Page 3   Page 5
+  //       ↓     ↑
+  //       Page 4
+  const nodePositions = {
+    6: { x: 400, y: 66, labelPos: 'right' },
+    1: { x: 400, y: 186, labelPos: 'right' },
+    2: { x: 400, y: 330, labelPos: 'right' },
+    3: { x: 225, y: 465, labelPos: 'left' },
+    5: { x: 575, y: 465, labelPos: 'right' },
+    4: { x: 400, y: 565, labelPos: 'bottom' },
+  };
+
+  // Compute dynamic radius proportional to PageRank score
+  const getRadius = (id) => {
+    const score = prData.ranks[id] || 0.1;
+    // Maps ~0.05 to ~24px and ~0.38 to ~48px
+    return Math.max(24, Math.min(50, 19 + score * 78));
+  };
+
+  // Build all directed edges
+  const edges = useMemo(() => {
+    const list = [];
+    pages.forEach((source) => {
+      source.linksTo.forEach((targetId) => {
+        const isBidirectional =
+          pages.find((p) => p.id === targetId)?.linksTo.includes(source.id) ||
+          false;
+        list.push({
+          id: `${source.id}-${targetId}`,
+          source: source.id,
+          target: targetId,
+          isBidirectional,
+        });
+      });
+    });
+    return list;
+  }, [pages]);
+
+  // Compute SVG path & arrowhead tip between two circles
+  const computeEdgeGeometry = (edge) => {
+    const p1 = nodePositions[edge.source];
+    const p2 = nodePositions[edge.target];
+    const r1 = getRadius(edge.source);
+    const r2 = getRadius(edge.target);
+
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const dist = Math.hypot(dx, dy);
+    const ux = dx / dist;
+    const uy = dy / dist;
+
+    // Perpendicular vector for curving bidirectional edges slightly apart
+    const nx = -uy;
+    const ny = ux;
+    const curveOffset = edge.isBidirectional ? 22 : 8;
+
+    const midX = (p1.x + p2.x) / 2 + nx * curveOffset;
+    const midY = (p1.y + p2.y) / 2 + ny * curveOffset;
+
+    // Start point on source circumference
+    const startAngle = Math.atan2(midY - p1.y, midX - p1.x);
+    const sx = p1.x + Math.cos(startAngle) * (r1 + 4);
+    const sy = p1.y + Math.sin(startAngle) * (r1 + 4);
+
+    // End point on target circumference (leave room for arrowhead)
+    const endAngle = Math.atan2(midY - p2.y, midX - p2.x);
+    const ex = p2.x + Math.cos(endAngle) * (r2 + 9);
+    const ey = p2.y + Math.sin(endAngle) * (r2 + 9);
+
+    const pathD = `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${midX.toFixed(
+      1
+    )} ${midY.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`;
+
+    return { pathD, sx, sy, ex, ey, midX, midY };
+  };
+
+  const activeNodeId = hoveredId || selectedPageId;
+
+  return (
+    <div className="relative w-full rounded-2xl border border-[#F4EFE6]/10 bg-[#0B0B0F]/90 backdrop-blur-xl p-4 sm:p-6 shadow-[0_25px_70px_rgba(0,0,0,0.75)] overflow-hidden">
+      {/* Subtle ambient radial glow behind Page 2 hub */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-45"
+        style={{
+          background:
+            'radial-gradient(circle at 50% 52%, rgba(212, 175, 55, 0.16) 0%, rgba(11, 11, 15, 0) 62%)',
+        }}
+      />
+
+      {/* Top Legend Bar */}
+      <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 pb-3 mb-2 border-b border-[#F4EFE6]/10 text-xs">
+        <div className="flex items-center gap-2 text-[#A89F91]">
+          <span className="inline-block w-2 h-2 rounded-full bg-[#D4AF37] animate-pulse" />
+          <span className="font-mono uppercase tracking-wider text-[11px]">
+            🕸️ Interactive Web Graph · Node Size = PageRank Authority
+          </span>
+        </div>
+        <div className="flex items-center gap-4 text-[11px] font-mono text-[#A89F91]">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 bg-[#D4AF37] inline-block" />
+            🗳️ Vote / Link Flow
+          </span>
+          <span className="text-[#F4EFE6]/70 hidden sm:inline">
+            👆 Click any node to inspect
+          </span>
+        </div>
+      </div>
+
+      {/* Responsive SVG Canvas */}
+      <div className="relative z-10 w-full flex justify-center">
+        <svg
+          viewBox="0 0 800 635"
+          className="w-full max-w-[760px] h-auto select-none overflow-visible"
+          role="img"
+          aria-label="PageRank Directed Link Graph"
+        >
+          <defs>
+            {/* Default Gold Arrowhead */}
+            <marker
+              id="arrow-default"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="6.5"
+              markerHeight="6.5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="rgba(212, 175, 55, 0.65)" />
+            </marker>
+
+            {/* Highlighted Incoming Vote Arrowhead */}
+            <marker
+              id="arrow-incoming"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="7.5"
+              markerHeight="7.5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#F5D061" />
+            </marker>
+
+            {/* Highlighted Outgoing Vote Arrowhead */}
+            <marker
+              id="arrow-outgoing"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#F4EFE6" />
+            </marker>
+
+            {/* Radial Glows for Nodes */}
+            <radialGradient id="node-gold-glow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#E5C158" stopOpacity="0.42" />
+              <stop offset="65%" stopColor="#D4AF37" stopOpacity="0.14" />
+              <stop offset="100%" stopColor="#D4AF37" stopOpacity="0" />
+            </radialGradient>
+
+            <radialGradient id="node-fill-hub" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stopColor="#352B12" />
+              <stop offset="55%" stopColor="#1A160D" />
+              <stop offset="100%" stopColor="#0D0C0A" />
+            </radialGradient>
+
+            <radialGradient id="node-fill-regular" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stopColor="#202028" />
+              <stop offset="100%" stopColor="#0E0E13" />
+            </radialGradient>
+          </defs>
+
+          {/* Subtle architectural concentric grid rings around Page 2 */}
+          <circle
+            cx="400"
+            cy="330"
+            r="145"
+            fill="none"
+            stroke="rgba(212, 175, 55, 0.07)"
+            strokeDasharray="3 6"
+          />
+          <circle
+            cx="400"
+            cy="330"
+            r="255"
+            fill="none"
+            stroke="rgba(244, 239, 230, 0.04)"
+            strokeDasharray="2 8"
+          />
+
+          {/* Directed Edges */}
+          {edges.map((edge) => {
+            const { pathD } = computeEdgeGeometry(edge);
+            const isIncomingToActive = activeNodeId === edge.target;
+            const isOutgoingFromActive = activeNodeId === edge.source;
+            const isDimmed =
+              activeNodeId && !isIncomingToActive && !isOutgoingFromActive;
+
+            let strokeColor = 'rgba(212, 175, 55, 0.35)';
+            let strokeWidth = 1.75;
+            let markerEnd = 'url(#arrow-default)';
+
+            if (isIncomingToActive) {
+              strokeColor = '#F5D061';
+              strokeWidth = 2.8;
+              markerEnd = 'url(#arrow-incoming)';
+            } else if (isOutgoingFromActive) {
+              strokeColor = 'rgba(244, 239, 230, 0.85)';
+              strokeWidth = 2.2;
+              markerEnd = 'url(#arrow-outgoing)';
+            }
+
+            return (
+              <g
+                key={edge.id}
+                style={{
+                  opacity: isDimmed ? 0.22 : 1,
+                  transition: 'opacity 300ms ease',
+                }}
+              >
+                {/* Base Path */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={strokeColor}
+                  strokeWidth={strokeWidth}
+                  markerEnd={markerEnd}
+                />
+                {/* Animated Flow Dash Overlay */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={isIncomingToActive ? '#FFF3C4' : '#D4AF37'}
+                  strokeWidth={isIncomingToActive ? 2.4 : 1.5}
+                  strokeDasharray="6 14"
+                  className="animate-link-flow"
+                  opacity={isIncomingToActive ? 0.95 : 0.65}
+                />
+              </g>
+            );
+          })}
+
+          {/* Nodes */}
+          {pages.map((page) => {
+            const pos = nodePositions[page.id];
+            const radius = getRadius(page.id);
+            const prPercent = (prData.ranks[page.id] * 100).toFixed(2);
+            const isHub = page.id === 2;
+            const isHovered = hoveredId === page.id;
+            const isSpamPage = page.id === 6;
+
+            // Label anchor alignment
+            let labelX = pos.x + radius + 14;
+            let labelY = pos.y - 4;
+            let textAnchor = 'start';
+
+            if (pos.labelPos === 'left') {
+              labelX = pos.x - radius - 14;
+              textAnchor = 'end';
+            } else if (pos.labelPos === 'bottom') {
+              labelX = pos.x;
+              labelY = pos.y + radius + 22;
+              textAnchor = 'middle';
+            }
+
+            return (
+              <g
+                key={page.id}
+                onClick={() => onSelectPage(page.id)}
+                onMouseEnter={() => setHoveredId(page.id)}
+                onMouseLeave={() => setHoveredId(null)}
+                className="cursor-pointer group"
+                style={{ transition: 'transform 300ms ease' }}
+              >
+                {/* Ambient Halo for High Authority Nodes */}
+                {(isHub || isHovered || prData.ranks[page.id] > 0.18) && (
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r={radius * 1.95}
+                    fill="url(#node-gold-glow)"
+                    className={isHub ? 'animate-pulse' : ''}
+                  />
+                )}
+
+                {/* Outer Orbital Ring */}
+                <circle
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={radius + (isHovered ? 6 : 3)}
+                  fill="none"
+                  stroke={
+                    isHub || isHovered
+                      ? 'rgba(212, 175, 55, 0.55)'
+                      : 'rgba(244, 239, 230, 0.14)'
+                  }
+                  strokeWidth={isHovered ? 1.5 : 1}
+                  strokeDasharray={isHub ? 'none' : '3 3'}
+                />
+
+                {/* Core Node Circle */}
+                <circle
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={radius}
+                  fill={isHub ? 'url(#node-fill-hub)' : 'url(#node-fill-regular)'}
+                  stroke={
+                    isHub
+                      ? '#E5C158'
+                      : isSpamPage
+                      ? '#C84B31'
+                      : isHovered
+                      ? '#D4AF37'
+                      : 'rgba(212, 175, 55, 0.45)'
+                  }
+                  strokeWidth={isHub ? 2.5 : 1.75}
+                />
+
+                {/* Node Title inside circle */}
+                <text
+                  x={pos.x}
+                  y={pos.y - 4}
+                  textAnchor="middle"
+                  fill={isHub ? '#F5D061' : '#F4EFE6'}
+                  fontSize={isHub ? '14' : '11.5'}
+                  fontWeight="700"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {page.emoji} P{page.id}
+                </text>
+
+                {/* PageRank Percentage inside circle */}
+                <text
+                  x={pos.x}
+                  y={pos.y + 13}
+                  textAnchor="middle"
+                  fill={isHub ? '#F4EFE6' : '#D4AF37'}
+                  fontSize={isHub ? '12.5' : '10.5'}
+                  fontWeight="600"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {prPercent}%
+                </text>
+
+                {/* External Domain & Incoming Votes Callout */}
+                <text
+                  x={labelX}
+                  y={labelY}
+                  textAnchor={textAnchor}
+                  fill="#F4EFE6"
+                  fontSize="12"
+                  fontWeight="600"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {page.emoji} {page.url}
+                </text>
+                <text
+                  x={labelX}
+                  y={labelY + 16}
+                  textAnchor={textAnchor}
+                  fill={isHub ? '#E5C158' : '#A89F91'}
+                  fontSize="10.5"
+                  fontFamily="Plus Jakarta Sans, sans-serif"
+                >
+                  🗳️ {prData.incomingMap[page.id].length} incoming vote
+                  {prData.incomingMap[page.id].length === 1 ? '' : 's'} ·{' '}
+                  {page.linksTo.length} out
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Bottom Interactive Status Strip */}
+      <div className="relative z-10 mt-2 pt-3 border-t border-[#F4EFE6]/10 flex flex-wrap items-center justify-between gap-2 text-xs text-[#A89F91]">
+        {hoveredId ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[#D4AF37] font-mono font-semibold">
+              🔍 Inspecting {pages.find((p) => p.id === hoveredId)?.emoji} Page {hoveredId} ({pages.find((p) => p.id === hoveredId)?.url})
+            </span>
+            <span>
+              ⬅️ Incoming:{' '}
+              <strong className="text-[#F4EFE6]">
+                {prData.incomingMap[hoveredId].length
+                  ? prData.incomingMap[hoveredId].map((id) => `P${id}`).join(', ')
+                  : 'None'}
+              </strong>
+            </span>
+            <span>
+              ➡️ Outgoing:{' '}
+              <strong className="text-[#F4EFE6]">
+                {pages
+                  .find((p) => p.id === hoveredId)
+                  ?.linksTo.map((id) => `P${id}`)
+                  .join(', ')}
+              </strong>
+            </span>
+          </div>
+        ) : (
+          <span>
+            ✨ Notice how <strong className="text-[#E5C158]">🍕 Page 2</strong> sits at the
+            center of trust, collecting votes from Pages 1, 3, 4, and 5—while{' '}
+            <strong className="text-[#E05A47]">🚨 Page 6</strong> receives zero incoming links.
+          </span>
+        )}
+        <span className="font-mono text-[11px] text-[#D4AF37]/90">
+          ⚡ Converged in {prData.iterations} iterations
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 5. PAGE DETAILS MODAL (Interactive Graph Traversal)
+// ============================================================================
+
+function PageDetailsModal({ pageId, pages, prData, query, onClose, onNavigate }) {
+  if (!pageId) return null;
+
+  const page = pages.find((p) => p.id === pageId);
+  if (!page) return null;
+
+  const prPercent = (prData.ranks[page.id] * 100).toFixed(2);
+  const incomingIds = prData.incomingMap[page.id] || [];
+  const outgoingIds = page.linksTo || [];
+  const keywordCount = countKeywordOccurrences(page.text, query);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-xl rounded-2xl border border-[#D4AF37]/30 bg-[#101015]/95 p-6 sm:p-8 shadow-[0_30px_90px_rgba(0,0,0,0.9)] text-[#F4EFE6]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Gold Accent Bar */}
+        <div className="absolute top-0 left-8 right-8 h-[2px] bg-gradient-to-r from-transparent via-[#D4AF37] to-transparent" />
+
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 pb-5 border-b border-[#F4EFE6]/10">
+          <div>
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#E5C158] font-mono text-xs mb-2">
+              <span>{page.emoji} ARCHIVE NODE · PAGE {page.id}</span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-mono font-bold tracking-tight text-[#F4EFE6]">
+              {page.url}
+            </h3>
+          </div>
+
+          <button
+            onClick={onClose}
+            aria-label="Close modal"
+            className="p-2 rounded-full border border-[#F4EFE6]/15 bg-[#181820] text-[#A89F91] hover:text-[#F4EFE6] hover:border-[#D4AF37]/50 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Indexed Document Text */}
+        <div className="my-5 p-4 rounded-xl bg-[#08080B] border border-[#F4EFE6]/10">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-[#A89F91] mb-1.5">
+            📄 Indexed Page Content
+          </div>
+          <p className="font-serif italic text-lg sm:text-xl text-[#F4EFE6] leading-relaxed">
+            “<HighlightedText text={page.text} query={query} />”
+          </p>
+        </div>
+
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
+          <div className="p-4 rounded-xl border border-[#D4AF37]/30 bg-gradient-to-br from-[#D4AF37]/10 to-transparent">
+            <div className="text-xs font-mono uppercase tracking-wider text-[#D4AF37] mb-1">
+              👑 PageRank Authority
+            </div>
+            <div className="text-2xl sm:text-3xl font-mono font-bold text-[#F4EFE6]">
+              {prPercent}%
+            </div>
+            <div className="text-xs text-[#A89F91] mt-1">
+              🗳️ From {incomingIds.length} incoming link{incomingIds.length === 1 ? '' : 's'}
+            </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-[#C84B31]/30 bg-gradient-to-br from-[#C84B31]/10 to-transparent">
+            <div className="text-xs font-mono uppercase tracking-wider text-[#E05A47] mb-1">
+              🔢 Keyword Frequency
+            </div>
+            <div className="text-2xl sm:text-3xl font-mono font-bold text-[#F4EFE6]">
+              {keywordCount}{' '}
+              <span className="text-sm font-normal text-[#A89F91]">
+                {keywordCount === 1 ? 'match' : 'matches'}
+              </span>
+            </div>
+            <div className="text-xs text-[#A89F91] mt-1 truncate">
+              🔍 Query: “{query || '—'}”
+            </div>
+          </div>
+        </div>
+
+        {/* Incoming & Outgoing Links Explorer */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Outgoing Links */}
+          <div className="p-4 rounded-xl bg-[#14141B] border border-[#F4EFE6]/10">
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[#A89F91] mb-3">
+              <ArrowUpRight className="w-4 h-4 text-[#F4EFE6]" />
+              <span>➡️ Outgoing Links ({outgoingIds.length})</span>
+            </div>
+            {outgoingIds.length > 0 ? (
+              <div className="space-y-2">
+                {outgoingIds.map((targetId) => {
+                  const targetPage = pages.find((p) => p.id === targetId);
+                  return (
+                    <button
+                      key={targetId}
+                      onClick={() => onNavigate(targetId)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#0B0B0F] hover:bg-[#1E1E28] border border-[#F4EFE6]/10 hover:border-[#D4AF37]/40 text-left text-xs transition group"
+                    >
+                      <span className="font-mono text-[#F4EFE6] group-hover:text-[#E5C158]">
+                        ➡️ {targetPage?.emoji} Page {targetId}
+                      </span>
+                      <span className="text-[#A89F91] truncate max-w-[135px]">
+                        {targetPage?.url}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-[#A89F91] italic">No outgoing links</p>
+            )}
+          </div>
+
+          {/* Incoming Links */}
+          <div className="p-4 rounded-xl bg-[#14141B] border border-[#D4AF37]/20">
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[#E5C158] mb-3">
+              <ArrowDownLeft className="w-4 h-4 text-[#D4AF37]" />
+              <span>⬅️ Incoming Links ({incomingIds.length})</span>
+            </div>
+            {incomingIds.length > 0 ? (
+              <div className="space-y-2">
+                {incomingIds.map((sourceId) => {
+                  const sourcePage = pages.find((p) => p.id === sourceId);
+                  return (
+                    <button
+                      key={sourceId}
+                      onClick={() => onNavigate(sourceId)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#0B0B0F] hover:bg-[#1E1B12] border border-[#D4AF37]/20 hover:border-[#D4AF37]/60 text-left text-xs transition group"
+                    >
+                      <span className="font-mono text-[#E5C158]">
+                        ⬅️ {sourcePage?.emoji} Page {sourceId}
+                      </span>
+                      <span className="text-[#A89F91] truncate max-w-[135px]">
+                        {sourcePage?.url}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-[#A89F91] italic">
+                🚫 0 incoming votes (isolated)
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// 6. MAIN APPLICATION COMPONENT
+// ============================================================================
+
+export default function App() {
+  const [query, setQuery] = useState('pizza');
+  const [activeTab, setActiveTab] = useState('pagerank'); // 'frequency' | 'pagerank'
+  const [selectedPageId, setSelectedPageId] = useState(null);
+  const [showFormulaDetails, setShowFormulaDetails] = useState(false);
+
+  // Dynamically compute PageRank once from the link graph
+  const prData = useMemo(() => calculatePageRank(WEB_PAGES, 0.85, 1e-9), []);
+
+  // Dynamically compute search metrics for every page based on active query
+  const enrichedPages = useMemo(() => {
+    return WEB_PAGES.map((page) => {
+      const freq = countKeywordOccurrences(page.text, query);
+      const pr = prData.ranks[page.id];
+      const prPercent = pr * 100;
+      const incomingCount = prData.incomingMap[page.id].length;
+
+      return {
+        ...page,
+        frequency: freq,
+        pageRank: pr,
+        pageRankPercent: prPercent,
+        incomingCount,
+      };
+    });
+  }, [query, prData]);
+
+  // Sorted list for Frequency Ranking (The Old Way)
+  const frequencyRanked = useMemo(() => {
+    return [...enrichedPages].sort((a, b) => {
+      if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+      return a.id - b.id;
+    });
+  }, [enrichedPages]);
+
+  // Sorted list for PageRank Ranking (The New Way)
+  const pageRankRanked = useMemo(() => {
+    return [...enrichedPages].sort((a, b) => b.pageRank - a.pageRank);
+  }, [enrichedPages]);
+
+  const maxFrequency = useMemo(() => {
+    const m = Math.max(...enrichedPages.map((p) => p.frequency));
+    return m > 0 ? m : 1;
+  }, [enrichedPages]);
+
+  const maxPageRank = useMemo(() => {
+    return Math.max(...enrichedPages.map((p) => p.pageRank));
+  }, [enrichedPages]);
+
+  const totalPercentageSum = useMemo(() => {
+    return enrichedPages.reduce((sum, p) => sum + p.pageRankPercent, 0);
+  }, [enrichedPages]);
+
+  const page2Data = enrichedPages.find((p) => p.id === 2);
+  const page6Data = enrichedPages.find((p) => p.id === 6);
+
+  const samplePills = [
+    { term: 'pizza', emoji: '🍕' },
+    { term: 'pune', emoji: '📍' },
+    { term: 'food', emoji: '🍽️' },
+    { term: 'chai', emoji: '☕' },
+    { term: 'wood-fired', emoji: '🔥' },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#070709] text-[#F4EFE6] selection:bg-[#D4AF37]/30 selection:text-[#F4EFE6] overflow-x-hidden">
+      {/* Google Fonts & Custom Keyframe Styles */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+        .font-editorial {
+          font-family: 'Cormorant Garamond', Georgia, serif;
+        }
+        .font-sans-ui {
+          font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        .font-mono-tech {
+          font-family: 'JetBrains Mono', monospace;
+        }
+
+        @keyframes linkFlow {
+          to {
+            stroke-dashoffset: -40;
+          }
+        }
+        .animate-link-flow {
+          animation: linkFlow 1.6s linear infinite;
+        }
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fadeIn {
+          animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .glass-card {
+          background: rgba(18, 18, 24, 0.68);
+          backdrop-filter: blur(18px);
+          -webkit-backdrop-filter: blur(18px);
+          border: 1px solid rgba(244, 239, 230, 0.08);
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .glass-card-gold {
+          background: linear-gradient(145deg, rgba(28, 24, 15, 0.78), rgba(14, 14, 19, 0.85));
+          backdrop-filter: blur(18px);
+          -webkit-backdrop-filter: blur(18px);
+          border: 1px solid rgba(212, 175, 55, 0.32);
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), 0 0 40px rgba(212, 175, 55, 0.08), inset 0 1px 0 rgba(229, 193, 88, 0.14);
+        }
+      `}</style>
+
+      {/* ====================================================================
+          1. HERO SECTION & 1998 MUSEUM EXHIBIT HEADER
+      ==================================================================== */}
+      <header className="relative isolate border-b border-[#F4EFE6]/10 overflow-hidden">
+        {/* Cinematic Gourmet Pizza Background Blended into Obsidian */}
+        <div className="pointer-events-none absolute inset-0 -z-10">
+          <img
+            src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=2000&q=80"
+            alt="Artisanal wood-fired pizza"
+            className="w-full h-full object-cover object-center opacity-[0.22] scale-105 filter saturate-[0.85] contrast-[1.12]"
+          />
+          {/* Multi-layered luxury obsidian vignettes */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(circle at 50% 28%, rgba(7, 7, 9, 0.35) 0%, rgba(7, 7, 9, 0.92) 72%, #070709 100%)',
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#070709]/70 via-transparent to-[#070709]" />
+        </div>
+
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-16 sm:pt-16 sm:pb-20 font-sans-ui">
+          {/* Top Museum Plaque Header */}
+          <div className="flex flex-col items-center text-center">
+            <div className="inline-flex items-center gap-2 text-[11px] font-mono-tech uppercase tracking-[0.25em] text-[#A89F91] mb-6">
+              <span className="w-6 h-[1px] bg-[#D4AF37]/50" />
+              <span>🏛️ Interactive Search History Exhibit</span>
+              <span className="w-6 h-[1px] bg-[#D4AF37]/50" />
+            </div>
+
+            {/* Brand Title + Vintage 1998 Badge */}
+            <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mb-5">
+              <h1 className="font-editorial text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight text-[#F4EFE6] flex items-center gap-2.5">
+                <span className="text-3xl sm:text-5xl" aria-hidden="true">🌐</span>
+                <span>
+                  Mini<span className="text-[#E5C158]">Google</span>
+                </span>
+              </h1>
+
+              {/* Vintage 1998 Era Badge */}
+              <div className="relative inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#121218]/90 border border-[#D4AF37]/45 shadow-[0_0_25px_rgba(212,175,55,0.18)]">
+                <span className="text-sm" aria-hidden="true">🏛️</span>
+                <span className="font-mono-tech text-sm sm:text-base font-bold tracking-widest text-[#E5C158]">
+                  1998
+                </span>
+                <span className="text-[10px] font-mono-tech uppercase tracking-wider text-[#A89F91] border-l border-[#F4EFE6]/15 pl-2">
+                  ARCHIVE EDITION
+                </span>
+              </div>
+            </div>
+
+            {/* Editorial Headline */}
+            <h2 className="font-editorial text-3xl sm:text-4xl md:text-5xl font-semibold text-[#F4EFE6] max-w-3xl leading-[1.15] mb-4">
+              “From Counting Words to Understanding the Web” ✨
+            </h2>
+
+            {/* Subtitle */}
+            <p className="text-base sm:text-lg text-[#A89F91] max-w-2xl leading-relaxed mb-10">
+              🕸️ Explore how <span className="text-[#E5C158] font-medium">PageRank</span>{' '}
+              changed search by treating links as votes of importance.
+            </p>
+          </div>
+
+          {/* ================================================================
+              2. CENTERPIECE SEARCH BAR
+          ================================================================ */}
+          <div className="max-w-2xl mx-auto mb-12">
+            <div className="relative group">
+              {/* Ambient Gold Focus Halo */}
+              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-[#C84B31]/30 via-[#D4AF37]/45 to-[#C84B31]/30 opacity-60 group-hover:opacity-100 blur-md transition duration-500" />
+
+              <div className="relative flex items-center rounded-2xl bg-[#0D0D12]/95 border border-[#D4AF37]/35 px-4 sm:px-6 py-3.5 sm:py-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+                <Search className="w-5 h-5 text-[#D4AF37] mr-3.5 shrink-0" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="🔍 Search the web…"
+                  aria-label="Search the web"
+                  className="w-full bg-transparent text-[#F4EFE6] placeholder-[#A89F91]/60 text-base sm:text-lg font-sans-ui focus:outline-none"
+                />
+                {query && (
+                  <button
+                    onClick={() => setQuery('')}
+                    className="text-xs font-mono-tech text-[#A89F91] hover:text-[#F4EFE6] px-2 py-1 rounded transition"
+                  >
+                    CLEAR ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Demo Query Label & Quick Sample Pills */}
+            <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
+              <div className="flex items-center gap-2 font-mono-tech text-[#A89F91]">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#D4AF37]" />
+                <span>
+                  🍕 Demo query:{' '}
+                  <strong className="text-[#E5C158]">{query || 'pizza'}</strong>
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[#A89F91]/70 text-[11px] mr-1">Try:</span>
+                {samplePills.map(({ term, emoji }) => (
+                  <button
+                    key={term}
+                    onClick={() => setQuery(term)}
+                    className={`px-2.5 py-0.5 rounded-full font-mono-tech text-[11px] border transition inline-flex items-center gap-1 ${
+                      query.toLowerCase() === term
+                        ? 'bg-[#D4AF37]/20 border-[#D4AF37]/60 text-[#E5C158]'
+                        : 'bg-[#13131A] border-[#F4EFE6]/10 text-[#A89F91] hover:text-[#F4EFE6] hover:border-[#F4EFE6]/25'
+                    }`}
+                  >
+                    <span>{emoji}</span>
+                    <span>{term}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ================================================================
+              13. 1998 HISTORICAL TIMELINE EXHIBIT STRIP
+          ================================================================ */}
+          <div className="max-w-4xl mx-auto rounded-2xl glass-card p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-2 mb-4 pb-2.5 border-b border-[#F4EFE6]/10">
+              <div className="flex items-center gap-2">
+                <span className="font-mono-tech text-xs font-bold px-2 py-0.5 rounded bg-[#D4AF37]/15 text-[#E5C158] border border-[#D4AF37]/30">
+                  📜 1998 CHRONICLE
+                </span>
+                <span className="text-xs text-[#A89F91]">
+                  Why early search engines reached a breaking point
+                </span>
+              </div>
+              <span className="hidden sm:inline font-mono-tech text-[11px] text-[#A89F91]">
+                EXHIBIT 00
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              {[
+                {
+                  step: '01',
+                  emoji: '🌐',
+                  title: 'Web grows rapidly',
+                  desc: 'Millions of new pages appear online every month.',
+                  accent: 'border-[#F4EFE6]/15',
+                },
+                {
+                  step: '02',
+                  emoji: '📈',
+                  title: 'Search becomes harder',
+                  desc: 'Finding trustworthy sources inside noise grows difficult.',
+                  accent: 'border-[#F4EFE6]/15',
+                },
+                {
+                  step: '03',
+                  emoji: '🧩',
+                  title: 'Keyword-based ranking has limitations',
+                  desc: 'Repetitive spam pages easily hijack top results.',
+                  accent: 'border-[#C84B31]/40',
+                },
+                {
+                  step: '04',
+                  emoji: '✨',
+                  title: 'PageRank introduces link-based authority',
+                  desc: 'Hyperlinks transform the web graph into a democracy of trust.',
+                  accent: 'border-[#D4AF37]/50',
+                },
+              ].map((item, index) => (
+                <div
+                  key={item.step}
+                  className={`relative p-3.5 rounded-xl bg-[#0B0B0F]/80 border ${item.accent} flex flex-col justify-between`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-mono-tech text-[11px] text-[#D4AF37]">
+                        {item.emoji} 1998 · {item.step}
+                      </span>
+                      {index < 3 && (
+                        <ArrowRight className="w-3.5 h-3.5 text-[#A89F91]/50 hidden lg:block" />
+                      )}
+                    </div>
+                    <h3 className="text-sm font-semibold text-[#F4EFE6] leading-snug mb-1">
+                      {item.title}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-[#A89F91] leading-relaxed">
+                    {item.desc}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ====================================================================
+          MAIN EXHIBIT CONTENT
+      ==================================================================== */}
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20 space-y-24 font-sans-ui">
+        {/* ==================================================================
+            10. INTERACTIVE DUAL-MODE SEARCH RESULTS SWITCHER
+        ================================================================== */}
+        <section aria-labelledby="interactive-search-heading">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
+            <div>
+              <div className="font-mono-tech text-xs uppercase tracking-[0.2em] text-[#D4AF37] mb-2">
+                ⚡ EXHIBIT 01 · LIVE RANKING ENGINE
+              </div>
+              <h2
+                id="interactive-search-heading"
+                className="font-editorial text-3xl sm:text-4xl font-bold text-[#F4EFE6]"
+              >
+                Compare Live Search Results
+              </h2>
+              <p className="text-sm sm:text-base text-[#A89F91] mt-1">
+                Toggle between ranking philosophies for{' '}
+                <span className="font-mono-tech text-[#F4EFE6]">
+                  “{query || 'all pages'}”
+                </span>
+                . Click any result card to inspect its node connections.
+              </p>
+            </div>
+
+            {/* Interactive Tab Switcher */}
+            <div className="inline-flex p-1.5 rounded-xl bg-[#101016] border border-[#F4EFE6]/10 self-start md:self-auto">
+              <button
+                onClick={() => setActiveTab('frequency')}
+                className={`px-4 py-2.5 rounded-lg font-mono-tech text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center gap-2 ${
+                  activeTab === 'frequency'
+                    ? 'bg-[#C84B31]/20 text-[#F4EFE6] border border-[#C84B31]/60 shadow-[0_0_20px_rgba(200,75,49,0.25)]'
+                    : 'text-[#A89F91] hover:text-[#F4EFE6] border border-transparent'
+                }`}
+              >
+                <span className="text-[#E05A47]">01</span>
+                <span>— 🔢 Frequency Ranking</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('pagerank')}
+                className={`px-4 py-2.5 rounded-lg font-mono-tech text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center gap-2 ${
+                  activeTab === 'pagerank'
+                    ? 'bg-[#D4AF37]/20 text-[#F4EFE6] border border-[#D4AF37]/60 shadow-[0_0_25px_rgba(212,175,55,0.22)]'
+                    : 'text-[#A89F91] hover:text-[#F4EFE6] border border-transparent'
+                }`}
+              >
+                <span className="text-[#E5C158]">02</span>
+                <span>— 👑 PageRank Ranking</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Animated Search Result Cards */}
+          <div
+            key={`${activeTab}-${query}`}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fadeIn"
+          >
+            {(activeTab === 'frequency' ? frequencyRanked : pageRankRanked).map(
+              (page, idx) => {
+                const rank = idx + 1;
+                const isPageRankMode = activeTab === 'pagerank';
+                const scoreBarWidth = isPageRankMode
+                  ? (page.pageRank / maxPageRank) * 100
+                  : (page.frequency / maxFrequency) * 100;
+
+                const isTopResult = rank === 1;
+                const isSpamWarning = !isPageRankMode && page.id === 6 && page.frequency > 3;
+
+                return (
+                  <div
+                    key={page.id}
+                    onClick={() => setSelectedPageId(page.id)}
+                    className={`group cursor-pointer rounded-2xl p-5 transition-all duration-300 hover:-translate-y-0.5 ${
+                      isTopResult
+                        ? isPageRankMode
+                          ? 'glass-card-gold'
+                          : 'glass-card border-[#C84B31]/50 shadow-[0_15px_40px_rgba(200,75,49,0.12)]'
+                        : 'glass-card hover:border-[#D4AF37]/35'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {/* Rank Number Badge */}
+                        <div
+                          className={`w-9 h-9 rounded-xl flex items-center justify-center font-mono-tech text-sm font-bold shrink-0 ${
+                            isTopResult
+                              ? isPageRankMode
+                                ? 'bg-[#D4AF37] text-[#070709]'
+                                : 'bg-[#C84B31] text-[#F4EFE6]'
+                              : 'bg-[#191922] text-[#A89F91] border border-[#F4EFE6]/10'
+                          }`}
+                        >
+                          #{rank}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base shrink-0" aria-hidden="true">
+                              {page.emoji}
+                            </span>
+                            <span className="font-mono-tech text-sm sm:text-base font-semibold text-[#F4EFE6] truncate group-hover:text-[#E5C158] transition">
+                              {page.url}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                            <span className="text-[11px] font-mono-tech text-[#A89F91]">
+                              Page {page.id}
+                            </span>
+                            {isSpamWarning && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono-tech px-2 py-0.5 rounded bg-[#C84B31]/20 text-[#E05A47] border border-[#C84B31]/40">
+                                <span>🔁 Keyword Stuffing</span>
+                              </span>
+                            )}
+                            {isPageRankMode && page.id === 2 && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-mono-tech px-2 py-0.5 rounded bg-[#D4AF37]/20 text-[#E5C158] border border-[#D4AF37]/40">
+                                <span>🏆 Highest Authority</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <ExternalLink className="w-4 h-4 text-[#A89F91]/50 group-hover:text-[#D4AF37] shrink-0 transition" />
+                    </div>
+
+                    {/* Text Snippet */}
+                    <p className="text-sm text-[#A89F91] leading-relaxed mb-4 line-clamp-2">
+                      “<HighlightedText text={page.text} query={query} />”
+                    </p>
+
+                    {/* Dual Metrics & Visual Score Bar */}
+                    <div className="pt-3 border-t border-[#F4EFE6]/10 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-mono-tech">
+                        <span
+                          className={
+                            !isPageRankMode ? 'text-[#E05A47] font-semibold' : 'text-[#A89F91]'
+                          }
+                        >
+                          🔢 Keyword freq: {page.frequency}
+                        </span>
+                        <span
+                          className={
+                            isPageRankMode ? 'text-[#E5C158] font-semibold' : 'text-[#A89F91]'
+                          }
+                        >
+                          👑 PageRank: {page.pageRankPercent.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      {/* Score Bar */}
+                      <div className="w-full h-1.5 rounded-full bg-[#09090D] overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${
+                            isPageRankMode
+                              ? 'bg-gradient-to-r from-[#B89228] to-[#F5D061]'
+                              : 'bg-gradient-to-r from-[#9E3520] to-[#E05A47]'
+                          }`}
+                          style={{ width: `${Math.max(4, scoreBarWidth)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+            )}
+          </div>
+        </section>
+
+        {/* ==================================================================
+            4. SECTION: THE OLD WAY — KEYWORD FREQUENCY
+        ================================================================== */}
+        <section
+          aria-labelledby="old-way-heading"
+          className="rounded-3xl glass-card p-6 sm:p-10 relative overflow-hidden"
+        >
+          {/* Subtle Terracotta Top Border Accent */}
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-[#C84B31]/70 to-transparent" />
+
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8 pb-6 border-b border-[#F4EFE6]/10">
+            <div>
+              <div className="inline-flex items-center gap-2 font-mono-tech text-xs uppercase tracking-[0.22em] text-[#E05A47] mb-2">
+                <span>🔢 THE OLD WAY · 📊 WORD COUNTING</span>
+              </div>
+              <h2
+                id="old-way-heading"
+                className="font-editorial text-3xl sm:text-4xl font-bold text-[#F4EFE6]"
+              >
+                Keyword Frequency
+              </h2>
+              <p className="text-sm sm:text-base text-[#A89F91] max-w-2xl mt-2 leading-relaxed">
+                Early/simple search systems could rank pages heavily according to
+                how often the search term appeared in the text.
+              </p>
+            </div>
+
+            {/* Museum Warning Plaque */}
+            <div className="inline-flex items-center gap-3 px-4 py-3 rounded-xl bg-[#C84B31]/12 border border-[#C84B31]/40 text-[#F4EFE6] self-start lg:self-auto">
+              <span className="text-xl shrink-0" aria-hidden="true">⚠️</span>
+              <div>
+                <div className="font-mono-tech text-xs sm:text-sm font-semibold text-[#F4EFE6]">
+                  “⚠️ More words ≠ more authority.”
+                </div>
+                <div className="text-[11px] text-[#A89F91]">
+                  Vulnerable to repetition & manipulation
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Ranking Cards for Keyword Frequency */}
+          <div className="space-y-3.5">
+            {frequencyRanked.map((page, index) => {
+              const rank = index + 1;
+              const isPage6 = page.id === 6;
+              const barPct = (page.frequency / maxFrequency) * 100;
+
+              return (
+                <div
+                  key={page.id}
+                  onClick={() => setSelectedPageId(page.id)}
+                  className={`cursor-pointer rounded-2xl p-4 sm:p-5 transition-all duration-300 border ${
+                    isPage6
+                      ? 'bg-gradient-to-r from-[#C84B31]/18 via-[#181316] to-[#121218] border-[#C84B31]/55 shadow-[0_12px_35px_rgba(200,75,49,0.16)]'
+                      : 'bg-[#0C0C11]/85 border-[#F4EFE6]/10 hover:border-[#F4EFE6]/25'
+                  }`}
+                >
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    {/* Left: Rank + Domain + Text */}
+                    <div className="flex items-start sm:items-center gap-4 min-w-0 flex-1">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-mono-tech text-sm font-bold shrink-0 ${
+                          isPage6
+                            ? 'bg-[#C84B31] text-[#F4EFE6]'
+                            : 'bg-[#171720] text-[#A89F91] border border-[#F4EFE6]/10'
+                        }`}
+                      >
+                        #{rank}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-base" aria-hidden="true">
+                            {page.emoji}
+                          </span>
+                          <span className="font-mono-tech text-sm sm:text-base font-bold text-[#F4EFE6]">
+                            {page.url}
+                          </span>
+                          <span className="text-[11px] font-mono-tech text-[#A89F91] px-2 py-0.5 rounded bg-[#16161E]">
+                            Page {page.id}
+                          </span>
+                          {isPage6 && (
+                            <span className="text-[11px] font-mono-tech text-[#E05A47] bg-[#C84B31]/20 border border-[#C84B31]/40 px-2 py-0.5 rounded">
+                              🔁 Manipulated Density
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs sm:text-sm text-[#A89F91] mt-1 truncate">
+                          <HighlightedText text={page.text} query={query} />
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Right: Frequency Count + Horizontal Bar */}
+                    <div className="w-full md:w-64 shrink-0">
+                      <div className="flex items-baseline justify-between text-xs font-mono-tech mb-1.5">
+                        <span className="text-[#A89F91] capitalize">
+                          {query || 'Term'} occurrences:
+                        </span>
+                        <span
+                          className={`text-base font-bold ${
+                            isPage6 ? 'text-[#E05A47]' : 'text-[#F4EFE6]'
+                          }`}
+                        >
+                          {page.frequency}
+                        </span>
+                      </div>
+                      <div className="w-full h-2.5 rounded-full bg-[#070709] border border-[#F4EFE6]/10 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${
+                            isPage6
+                              ? 'bg-gradient-to-r from-[#C84B31] to-[#F0715B]'
+                              : 'bg-[#A89F91]/60'
+                          }`}
+                          style={{ width: `${Math.max(3, barPct)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ==================================================================
+            5 & 6. SECTION: THE NEW WAY — PAGERANK & INTERACTIVE NETWORK GRAPH
+        ================================================================== */}
+        <section aria-labelledby="new-way-heading" className="space-y-8">
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+            <div>
+              <div className="inline-flex items-center gap-2 font-mono-tech text-xs uppercase tracking-[0.22em] text-[#E5C158] mb-2">
+                <span>🕸️ THE NEW WAY</span>
+              </div>
+              <div className="flex flex-wrap items-baseline gap-3">
+                <h2
+                  id="new-way-heading"
+                  className="font-editorial text-3xl sm:text-5xl font-bold text-[#F4EFE6]"
+                >
+                  PageRank
+                </h2>
+                <span className="font-editorial italic text-xl sm:text-2xl text-[#E5C158]">
+                  “Links become votes. 🗳️✨”
+                </span>
+              </div>
+              <p className="text-sm sm:text-base text-[#A89F91] max-w-2xl mt-2 leading-relaxed">
+                Instead of only counting words, PageRank evaluates the importance
+                of a page based on the pages linking to it.
+              </p>
+            </div>
+
+            {/* Mathematical Formula Toggle Button */}
+            <button
+              onClick={() => setShowFormulaDetails(!showFormulaDetails)}
+              className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl glass-card-gold text-xs font-mono-tech text-[#E5C158] hover:border-[#E5C158] transition self-start lg:self-auto"
+            >
+              <span>🧮</span>
+              <span>
+                {showFormulaDetails ? 'Hide Algorithm Spec' : 'Inspect PageRank Formula'}
+              </span>
+            </button>
+          </div>
+
+          {/* Collapsible / Always-Accessible Mathematical Formula Plaque */}
+          {showFormulaDetails && (
+            <div className="rounded-2xl glass-card-gold p-6 animate-fadeIn">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                <div className="lg:col-span-7 space-y-2">
+                  <div className="text-[11px] font-mono-tech uppercase tracking-widest text-[#D4AF37]">
+                    📐 Iterative Eigenvector Formulation (1998)
+                  </div>
+                  <div className="p-4 rounded-xl bg-[#070709]/90 border border-[#D4AF37]/30 font-mono-tech text-sm sm:text-base text-[#F4EFE6] overflow-x-auto">
+                    PR(A) = (1 - d) / N + d × Σ ( PR(Tᵢ) / C(Tᵢ) )
+                  </div>
+                  <p className="text-xs text-[#A89F91] leading-relaxed">
+                    Computed dynamically in JavaScript starting at{' '}
+                    <code className="text-[#F4EFE6]">1/6 (16.67%)</code> per node
+                    until convergence (<code className="text-[#F4EFE6]">Δ &lt; 10⁻⁹</code>).
+                  </p>
+                </div>
+
+                <div className="lg:col-span-5 grid grid-cols-2 gap-3 font-mono-tech text-xs">
+                  <div className="p-3 rounded-xl bg-[#0B0B0F] border border-[#F4EFE6]/10">
+                    <div className="text-[#A89F91]">Damping (d)</div>
+                    <div className="text-lg font-bold text-[#E5C158] mt-0.5">0.85</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#0B0B0F] border border-[#F4EFE6]/10">
+                    <div className="text-[#A89F91]">Total Nodes (N)</div>
+                    <div className="text-lg font-bold text-[#F4EFE6] mt-0.5">6</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#0B0B0F] border border-[#F4EFE6]/10">
+                    <div className="text-[#A89F91]">Initial Rank</div>
+                    <div className="text-lg font-bold text-[#F4EFE6] mt-0.5">1 / 6</div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#0B0B0F] border border-[#F4EFE6]/10">
+                    <div className="text-[#A89F91]">Iterations</div>
+                    <div className="text-lg font-bold text-[#E5C158] mt-0.5">
+                      {prData.iterations}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive SVG Network Visualization */}
+          <PageRankNetworkGraph
+            pages={WEB_PAGES}
+            prData={prData}
+            selectedPageId={selectedPageId}
+            onSelectPage={(id) => setSelectedPageId(id)}
+          />
+        </section>
+
+        {/* ==================================================================
+            7. PAGERANK PERCENTAGES — “Where does the web’s attention go?”
+        ================================================================== */}
+        <section
+          aria-labelledby="attention-heading"
+          className="rounded-3xl glass-card-gold p-6 sm:p-10"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 pb-6 border-b border-[#D4AF37]/20">
+            <div>
+              <div className="font-mono-tech text-xs uppercase tracking-[0.22em] text-[#D4AF37] mb-2">
+                📊 EQUILIBRIUM AUTHORITY DISTRIBUTION
+              </div>
+              <h2
+                id="attention-heading"
+                className="font-editorial text-3xl sm:text-4xl font-bold text-[#F4EFE6]"
+              >
+                “Where does the web’s attention go? 🎯”
+              </h2>
+            </div>
+
+            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#09090D]/90 border border-[#D4AF37]/30 font-mono-tech text-xs">
+              <span>✅</span>
+              <span className="text-[#A89F91]">Total Sum:</span>
+              <span className="text-[#E5C158] font-bold">
+                {totalPercentageSum.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+            {enrichedPages.map((page) => {
+              const isLeader = page.id === 2;
+              const barRelativeWidth = (page.pageRank / maxPageRank) * 100;
+
+              return (
+                <div
+                  key={page.id}
+                  onClick={() => setSelectedPageId(page.id)}
+                  className={`cursor-pointer rounded-2xl p-4 sm:p-5 transition-all duration-300 border ${
+                    isLeader
+                      ? 'bg-[#1D180E]/90 border-[#E5C158]/60 shadow-[0_12px_35px_rgba(212,175,55,0.16)]'
+                      : 'bg-[#0B0B0F]/85 border-[#F4EFE6]/10 hover:border-[#D4AF37]/40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3 mb-2.5">
+                    <div className="min-w-0">
+                      <div className="font-mono-tech text-xs sm:text-sm font-semibold text-[#F4EFE6] truncate">
+                        {page.emoji} Page {page.id} —{' '}
+                        <span className={isLeader ? 'text-[#E5C158]' : 'text-[#F4EFE6]'}>
+                          {page.url}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-[#A89F91] mt-0.5">
+                        🗳️ {page.incomingCount} incoming link
+                        {page.incomingCount === 1 ? '' : 's'} · ➡️ {page.linksTo.length}{' '}
+                        outgoing
+                      </div>
+                    </div>
+
+                    <div
+                      className={`font-mono-tech text-lg sm:text-xl font-bold shrink-0 ${
+                        isLeader ? 'text-[#F5D061]' : 'text-[#D4AF37]'
+                      }`}
+                    >
+                      <AnimatedPercentage value={page.pageRankPercent} />
+                    </div>
+                  </div>
+
+                  {/* Animated Golden Progress Bar */}
+                  <div className="w-full h-2 rounded-full bg-[#060608] overflow-hidden border border-[#F4EFE6]/5">
+                    <div
+                      className={`h-full rounded-full transition-all duration-1000 ${
+                        isLeader
+                          ? 'bg-gradient-to-r from-[#D4AF37] via-[#F5D061] to-[#FFF0B3]'
+                          : 'bg-gradient-to-r from-[#8C6D1F] to-[#D4AF37]'
+                      }`}
+                      style={{ width: `${Math.max(6, barRelativeWidth)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ==================================================================
+            8. SIDE-BY-SIDE PHILOSOPHY COMPARISON
+        ================================================================== */}
+        <section aria-labelledby="philosophy-heading" className="space-y-8">
+          <div className="text-center max-w-2xl mx-auto">
+            <div className="font-mono-tech text-xs uppercase tracking-[0.25em] text-[#D4AF37] mb-2">
+              ⚖️ ARCHITECTURAL PARADIGM SHIFT
+            </div>
+            <h2
+              id="philosophy-heading"
+              className="font-editorial text-3xl sm:text-5xl font-bold tracking-tight text-[#F4EFE6]"
+            >
+              SAME SEARCH. DIFFERENT PHILOSOPHY.
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-11 gap-6 items-stretch">
+            {/* Left Column: OLD WAY */}
+            <div className="lg:col-span-5 rounded-3xl glass-card p-6 sm:p-8 flex flex-col justify-between border-[#C84B31]/30">
+              <div>
+                <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#F4EFE6]/10">
+                  <div>
+                    <span className="font-mono-tech text-xs uppercase tracking-widest text-[#E05A47]">
+                      🔢 OLD WAY
+                    </span>
+                    <h3 className="font-editorial text-2xl sm:text-3xl font-bold text-[#F4EFE6] mt-0.5">
+                      Keyword Frequency
+                    </h3>
+                  </div>
+                  <span className="font-mono-tech text-xs px-2.5 py-1 rounded bg-[#C84B31]/15 text-[#E05A47] border border-[#C84B31]/30">
+                    📄 ISOLATED TEXT
+                  </span>
+                </div>
+
+                <div className="flex flex-col items-center text-center space-y-3 py-4">
+                  {[
+                    '🔍 Search term',
+                    '🔢 Count occurrences',
+                    '📋 Rank pages',
+                  ].map((step, idx, arr) => (
+                    <React.Fragment key={step}>
+                      <div className="w-full max-w-xs py-3.5 px-4 rounded-xl bg-[#0B0B0F] border border-[#C84B31]/35 font-mono-tech text-sm text-[#F4EFE6] shadow-inner">
+                        {step}
+                      </div>
+                      {idx < arr.length - 1 && (
+                        <ArrowDown className="w-4 h-4 text-[#E05A47]" />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-[#F4EFE6]/10 text-xs text-[#A89F91] text-center">
+                Evaluates each page in isolation, ignoring the wider web.
+              </div>
+            </div>
+
+            {/* Center Connector: EVOLUTION ➡️ */}
+            <div className="lg:col-span-1 flex flex-col items-center justify-center py-2">
+              <div className="px-3 py-2 rounded-full bg-[#14141C] border border-[#D4AF37]/40 text-[#E5C158] font-mono-tech text-[11px] font-bold tracking-wider flex items-center gap-1 shadow-[0_0_25px_rgba(212,175,55,0.2)]">
+                <span>EVOLUTION</span>
+                <span className="hidden lg:inline">➡️</span>
+                <span className="lg:hidden">⬇️</span>
+              </div>
+            </div>
+
+            {/* Right Column: NEW WAY */}
+            <div className="lg:col-span-5 rounded-3xl glass-card-gold p-6 sm:p-8 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#D4AF37]/20">
+                  <div>
+                    <span className="font-mono-tech text-xs uppercase tracking-widest text-[#E5C158]">
+                      👑 NEW WAY
+                    </span>
+                    <h3 className="font-editorial text-2xl sm:text-3xl font-bold text-[#F4EFE6] mt-0.5">
+                      PageRank
+                    </h3>
+                  </div>
+                  <span className="font-mono-tech text-xs px-2.5 py-1 rounded bg-[#D4AF37]/15 text-[#E5C158] border border-[#D4AF37]/35">
+                    🕸️ COLLECTIVE GRAPH
+                  </span>
+                </div>
+
+                <div className="flex flex-col items-center text-center space-y-2.5 py-2">
+                  {[
+                    '🌐 Web pages',
+                    '🔗 Analyze links',
+                    '🗳️ Links become votes',
+                    '👑 Important pages receive more authority',
+                    '🏆 Rank pages',
+                  ].map((step, idx, arr) => (
+                    <React.Fragment key={step}>
+                      <div
+                        className={`w-full max-w-xs py-3 px-4 rounded-xl font-mono-tech text-xs sm:text-sm border ${
+                          idx === 2 || idx === 3
+                            ? 'bg-[#1D180E] border-[#D4AF37]/50 text-[#F5D061] font-semibold'
+                            : 'bg-[#0B0B0F] border-[#D4AF37]/25 text-[#F4EFE6]'
+                        }`}
+                      >
+                        {step}
+                      </div>
+                      {idx < arr.length - 1 && (
+                        <ArrowDown className="w-4 h-4 text-[#D4AF37]" />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-[#D4AF37]/20 text-xs text-[#A89F91] text-center">
+                Harnesses human editorial judgment encoded across hyperlinks.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ==================================================================
+            9. IMPORTANT DEMONSTRATION — “The problem with counting words”
+        ================================================================== */}
+        <section
+          aria-labelledby="case-study-heading"
+          className="rounded-3xl border border-[#D4AF37]/30 bg-gradient-to-b from-[#121218] to-[#09090D] p-6 sm:p-10 shadow-[0_30px_80px_rgba(0,0,0,0.8)]"
+        >
+          <div className="text-center max-w-2xl mx-auto mb-10">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 font-mono-tech text-xs text-[#E5C158] mb-3">
+              <span>✨ DEFINING CASE STUDY</span>
+            </div>
+            <h2
+              id="case-study-heading"
+              className="font-editorial text-3xl sm:text-5xl font-bold text-[#F4EFE6]"
+            >
+              “The problem with counting words 🔍”
+            </h2>
+            <p className="text-sm sm:text-base text-[#A89F91] mt-2">
+              Why a spam page repeating “pizza” ten times loses to a trusted
+              local pizzeria endorsed by the web.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-11 gap-6 items-center">
+            {/* Page 6 Card */}
+            <div
+              onClick={() => setSelectedPageId(6)}
+              className="md:col-span-5 cursor-pointer rounded-2xl p-6 bg-[#141013] border border-[#C84B31]/45 hover:border-[#E05A47] transition group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-mono-tech text-xs font-bold px-2.5 py-1 rounded bg-[#C84B31]/20 text-[#E05A47]">
+                  🚨 PAGE 6 · SPAM EXAMPLE
+                </span>
+                <span className="font-mono-tech text-xs text-[#A89F91] group-hover:text-[#F4EFE6]">
+                  Inspect →
+                </span>
+              </div>
+
+              <h3 className="font-mono-tech text-lg sm:text-xl font-bold text-[#F4EFE6] mb-4">
+                {page6Data?.emoji} {page6Data?.url}
+              </h3>
+
+              <div className="flex flex-col items-center text-center space-y-2.5 py-3 px-4 rounded-xl bg-[#09090C] border border-[#F4EFE6]/10">
+                <div className="text-sm font-semibold text-[#E05A47]">
+                  🔁 High keyword frequency ({page6Data?.frequency}× “{query || 'pizza'}”)
+                </div>
+                <ArrowDown className="w-4 h-4 text-[#A89F91]" />
+                <div className="text-sm font-mono-tech text-[#F4EFE6]">
+                  📉 But relatively low PageRank (
+                  <span className="text-[#E05A47] font-bold">
+                    {page6Data?.pageRankPercent.toFixed(2)}%
+                  </span>
+                  )
+                </div>
+              </div>
+
+              <p className="text-xs text-[#A89F91] mt-4">
+                Zero pages link to <code className="text-[#F4EFE6]">pizza-pizza-pizza.com</code>.
+                Its authority comes solely from the random-surfer baseline{' '}
+                <code className="text-[#F4EFE6]">(1 - d) / N</code>.
+              </p>
+            </div>
+
+            {/* VS Divider */}
+            <div className="md:col-span-1 flex justify-center">
+              <div className="w-11 h-11 rounded-full bg-[#181822] border border-[#D4AF37]/40 flex items-center justify-center font-editorial italic text-lg font-bold text-[#E5C158]">
+                vs
+              </div>
+            </div>
+
+            {/* Page 2 Card */}
+            <div
+              onClick={() => setSelectedPageId(2)}
+              className="md:col-span-5 cursor-pointer rounded-2xl p-6 glass-card-gold hover:border-[#F5D061] transition group"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-mono-tech text-xs font-bold px-2.5 py-1 rounded bg-[#D4AF37]/20 text-[#E5C158]">
+                  👑 PAGE 2 · TRUSTED AUTHORITY
+                </span>
+                <span className="font-mono-tech text-xs text-[#E5C158] group-hover:underline">
+                  Inspect →
+                </span>
+              </div>
+
+              <h3 className="font-mono-tech text-lg sm:text-xl font-bold text-[#F4EFE6] mb-4">
+                {page2Data?.emoji} {page2Data?.url}
+              </h3>
+
+              <div className="flex flex-col items-center text-center space-y-2.5 py-3 px-4 rounded-xl bg-[#09090C]/90 border border-[#D4AF37]/30">
+                <div className="text-sm font-semibold text-[#F4EFE6]">
+                  🍕 Lower keyword frequency ({page2Data?.frequency}× “{query || 'pizza'}”)
+                </div>
+                <ArrowDown className="w-4 h-4 text-[#D4AF37]" />
+                <div className="text-sm font-mono-tech text-[#F4EFE6]">
+                  🏆 Much stronger link authority (
+                  <span className="text-[#F5D061] font-bold">
+                    {page2Data?.pageRankPercent.toFixed(2)}%
+                  </span>
+                  )
+                </div>
+              </div>
+
+              <p className="text-xs text-[#A89F91] mt-4">
+                Endorsed by <strong className="text-[#E5C158]">🗳️ 4 incoming links</strong>{' '}
+                (Pages 1, 3, 4, and 5), establishing genuine web consensus.
+              </p>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      {/* ====================================================================
+          18. FINAL MUSEUM CLOSING PLAQUE & FOOTER
+      ==================================================================== */}
+      <footer className="border-t border-[#F4EFE6]/10 bg-[#050507] py-16 px-4 sm:px-6 text-center font-sans-ui">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <div className="w-12 h-[1px] bg-[#D4AF37]/60 mx-auto mb-6" />
+
+          <blockquote className="font-editorial italic text-2xl sm:text-4xl text-[#F4EFE6] leading-snug">
+            “Search changed when the web itself became part of the ranking.”
+          </blockquote>
+
+          <div className="pt-4 font-mono-tech text-sm tracking-widest uppercase text-[#E5C158] font-semibold">
+            MiniGoogle · 1998 🏛️
+          </div>
+
+          <p className="text-xs sm:text-sm text-[#A89F91] max-w-lg mx-auto">
+            ✨ A visual demonstration of the evolution from keyword frequency to
+            link-based ranking.
+          </p>
+        </div>
+      </footer>
+
+      {/* ====================================================================
+          11. INTERACTIVE PAGE INSPECTION MODAL
+      ==================================================================== */}
+      <PageDetailsModal
+        pageId={selectedPageId}
+        pages={WEB_PAGES}
+        prData={prData}
+        query={query}
+        onClose={() => setSelectedPageId(null)}
+        onNavigate={(nextId) => setSelectedPageId(nextId)}
+      />
+    </div>
+  );
+}
